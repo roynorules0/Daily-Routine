@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   X, Save, FileOutput, FileInput, Send, RefreshCcw, ShieldAlert, Key, 
-  Settings, Clock, Bell, Palette, Globe, ChevronRight, Lock, Unlock, Check
+  Settings, Clock, Bell, Palette, Globe, ChevronRight, Lock, Unlock, Check, Copy
 } from 'lucide-react';
 import { AdminSettings, RoutineItem, WorkoutDay, TelegramLog } from '../types';
 
@@ -38,7 +38,175 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const [passcode, setPasscode] = useState('');
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'api' | 'routine' | 'notifs' | 'theme' | 'backup'>('api');
+  const [activeSubTab, setActiveSubTab] = useState<'api' | 'routine' | 'notifs' | 'theme' | 'backup' | 'health'>('api');
+
+  // Diagnostics UI state
+  const [tgTestState, setTgTestState] = useState<{
+    running: boolean;
+    success?: boolean;
+    error?: string;
+    steps?: Array<{ name: string; status: 'success' | 'failed' | 'pending'; message: string; requestUrl?: string; statusCode?: number; rawResponse?: any; rawError?: any }>;
+  }>({ running: false });
+
+  const [geminiTestState, setGeminiTestState] = useState<{
+    running: boolean;
+    success?: boolean;
+    error?: string;
+    statusCode?: number;
+    requestUrl?: string;
+    rawResponse?: any;
+    rawError?: any;
+    message?: string;
+  }>({ running: false });
+
+  const [youtubeTestState, setYoutubeTestState] = useState<{
+    running: boolean;
+    success?: boolean;
+    error?: string;
+    statusCode?: number;
+    requestUrl?: string;
+    rawResponse?: any;
+    rawError?: any;
+    message?: string;
+  }>({ running: false });
+
+  // Expanding states for Collapsibles
+  const [expTg, setExpTg] = useState(false);
+  const [expGemini, setExpGemini] = useState(false);
+  const [expYoutube, setExpYoutube] = useState(false);
+
+  // Copy state feedbacks
+  const [copiedStates, setCopiedStates] = useState<Record<string, boolean>>({});
+
+  const handleCopyText = (key: string, textObj: any) => {
+    const textToCopy = typeof textObj === 'object' ? JSON.stringify(textObj, null, 2) : String(textObj);
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      setCopiedStates(prev => ({ ...prev, [key]: true }));
+      addToast('Copied diagnostic details to clipboard!', 'success');
+      setTimeout(() => {
+        setCopiedStates(prev => ({ ...prev, [key]: false }));
+      }, 2000);
+    }).catch(() => {
+      addToast('Failed to copy to clipboard', 'error');
+    });
+  };
+
+  const runDiagnosticTelegram = async () => {
+    if (!telegramToken || !telegramChannel) {
+      addToast('Bot Token & Channel are required to start Telegram diagnostics.', 'error');
+      return;
+    }
+    setTgTestState({ running: true });
+    setExpTg(true);
+    addToast('Starting detailed 5-stage Telegram connection test...', 'info');
+    try {
+      const response = await fetch('/api/telegram-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: telegramToken,
+          channelUsername: telegramChannel
+        })
+      });
+      const data = await response.json();
+      setTgTestState({
+        running: false,
+        success: data.success,
+        error: data.error,
+        steps: data.steps
+      });
+      if (data.success) {
+        addToast('Telegram connection validated successfully!', 'success');
+      } else {
+        addToast(`Telegram connection check failed: ${data.error}`, 'error');
+      }
+    } catch (err: any) {
+      setTgTestState({
+        running: false,
+        success: false,
+        error: err.message || 'Fatal diagnostic failure.'
+      });
+      addToast('Detailed Telegram test hit a network block.', 'error');
+    }
+  };
+
+  const runDiagnosticGemini = async () => {
+    setGeminiTestState({ running: true });
+    setExpGemini(true);
+    addToast('Contacting Gemini LLM API systems...', 'info');
+    try {
+      const response = await fetch('/api/health/test-gemini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          geminiApiKey: geminiKey
+        })
+      });
+      const data = await response.json();
+      setGeminiTestState({
+        running: false,
+        success: data.success,
+        error: data.error,
+        statusCode: data.statusCode,
+        requestUrl: data.requestUrl,
+        rawResponse: data.rawResponse,
+        rawError: data.rawError,
+        message: data.message
+      });
+      if (data.success) {
+        addToast('Gemini connection stands strong!', 'success');
+      } else {
+        addToast(`Gemini verified failure: ${data.error}`, 'error');
+      }
+    } catch (err: any) {
+      setGeminiTestState({
+        running: false,
+        success: false,
+        error: 'Network error',
+        rawError: err.message || err
+      });
+      addToast('Gemini test hit a network block.', 'error');
+    }
+  };
+
+  const runDiagnosticYoutube = async () => {
+    setYoutubeTestState({ running: true });
+    setExpYoutube(true);
+    addToast('Starting YouTube API verification query...', 'info');
+    try {
+      const response = await fetch('/api/health/test-youtube', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          youtubeApiKey: youtubeKey
+        })
+      });
+      const data = await response.json();
+      setYoutubeTestState({
+        running: false,
+        success: data.success,
+        error: data.error,
+        statusCode: data.statusCode,
+        requestUrl: data.requestUrl,
+        rawResponse: data.rawResponse,
+        rawError: data.rawError,
+        message: data.message
+      });
+      if (data.success) {
+        addToast('YouTube API validated successfully!', 'success');
+      } else {
+        addToast(`YouTube API check failed: ${data.error}`, 'error');
+      }
+    } catch (err: any) {
+      setYoutubeTestState({
+        running: false,
+        success: false,
+        error: 'Network error',
+        rawError: err.message || err
+      });
+      addToast('YouTube API test hit a network block.', 'error');
+    }
+  };
 
   // Input states synchronized from props
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey || '');
@@ -243,7 +411,8 @@ export default function AdminPanel({
                 { id: 'routine', label: 'Routines Board', icon: Clock },
                 { id: 'notifs', label: 'Notifs Channels', icon: Bell },
                 { id: 'theme', label: 'Theme Studio', icon: Palette },
-                { id: 'backup', label: 'Ledger Backups', icon: FileOutput }
+                { id: 'backup', label: 'Ledger Backups', icon: FileOutput },
+                { id: 'health', label: 'System Health', icon: ShieldAlert }
               ].map((tab) => {
                 const Icon = tab.icon;
                 const active = activeSubTab === tab.id;
@@ -638,6 +807,370 @@ export default function AdminPanel({
                     </div>
                   </div>
 
+                </div>
+              )}
+
+              {/* SYSTEM HEALTH DIAGNOSTICS */}
+              {activeSubTab === 'health' && (
+                <div className="space-y-6 text-left" id="system-health-panel">
+                  <div>
+                    <h3 className="text-xs font-black uppercase text-zinc-400 tracking-wider font-mono">SYSTEM INTEGRATIONS HEALTH</h3>
+                    <p className="text-[10px] text-zinc-550">Verify real-time API latency, authorization credentials, and trace raw payload logs</p>
+                  </div>
+
+                  {/* TELEGRAM SERVICE CARD */}
+                  <div className="p-4 bg-zinc-950/60 border border-zinc-900 rounded-[24px] space-y-4" id="health-card-telegram">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 relative">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${tgTestState.success ? 'bg-emerald-400' : tgTestState.error ? 'bg-rose-500' : 'bg-amber-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${tgTestState.success ? 'bg-emerald-500' : tgTestState.error ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
+                        </span>
+                        <h4 className="text-xs font-black uppercase tracking-wider font-mono text-zinc-200">Telegram Bot Channel link</h4>
+                      </div>
+
+                      <button
+                        type="button"
+                        id="test-telegram-health-btn"
+                        disabled={tgTestState.running}
+                        onClick={runDiagnosticTelegram}
+                        className="p-1.5 px-3 bg-[#0a0a0d] hover:bg-zinc-900 border border-zinc-850 rounded-xl text-[10px] font-bold font-mono tracking-wide text-zinc-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        {tgTestState.running ? <RefreshCcw className="w-3 h-3 animate-spin text-indigo-400" /> : <Send className="w-3 h-3 text-indigo-400" />}
+                        Run 5-Stage Trace
+                      </button>
+                    </div>
+
+                    {/* Step list for Telegram diagnostics */}
+                    {tgTestState.steps && (
+                      <div className="bg-[#040406] border border-zinc-900/60 rounded-2xl p-3.5 space-y-3" id="tg-diagnostic-steps-panel">
+                        <div className="flex items-center justify-between text-[9px] uppercase font-bold tracking-wider text-zinc-550 border-b border-zinc-900/40 pb-2">
+                          <span>Multi-Stage Dispatch Trace</span>
+                          <span className={tgTestState.success ? 'text-emerald-400' : 'text-rose-450'}>
+                            {tgTestState.success ? '✅ CONNECTION STABLE' : '❌ VERIFICATION HIT A DEVIATION'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-2.5">
+                          {tgTestState.steps.map((st, i) => {
+                            const isPending = st.status === 'pending';
+                            const isSuccess = st.status === 'success';
+                            const isFailed = st.status === 'failed';
+                            return (
+                              <div key={i} className="flex items-start gap-2.5 text-[11px] leading-relaxed transition duration-200" id={`tg-trace-step-${i}`}>
+                                <div className="mt-0.5 shrink-0">
+                                  {isPending && <span className="inline-block w-4 h-4 rounded-full border border-zinc-800 text-[9px] text-zinc-650 text-center leading-3 font-bold">○</span>}
+                                  {isSuccess && <span className="inline-block w-4 h-4 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] text-center leading-4 font-bold">✓</span>}
+                                  {isFailed && <span className="inline-block w-4 h-4 rounded-full bg-rose-500/10 text-rose-450 text-[10px] text-center leading-4 font-bold">✗</span>}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex justify-between items-center">
+                                    <span className={`font-mono text-[10px] font-bold ${isSuccess ? 'text-zinc-300 font-extrabold' : isFailed ? 'text-rose-400 font-extrabold' : 'text-zinc-650'}`}>
+                                      {isSuccess ? '✅' : isFailed ? '❌' : '⏳'} {st.name}
+                                    </span>
+                                    {st.statusCode && (
+                                      <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${st.statusCode === 200 ? 'bg-emerald-950/40 text-emerald-400' : 'bg-rose-950/40 text-rose-400'}`}>
+                                        HTTP {st.statusCode}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-zinc-500 font-mono mt-0.5 leading-snug">{st.message}</p>
+                                  
+                                  {/* Multi-step code details */}
+                                  {expTg && (st.requestUrl || st.rawResponse || st.rawError) && (
+                                    <div className="mt-2 pl-2 border-l border-zinc-900 space-y-2 text-[9.5px]">
+                                      {st.requestUrl && (
+                                        <div className="space-y-0.5">
+                                          <span className="text-[8.5px] text-zinc-650 font-bold block uppercase font-mono">View Request URL</span>
+                                          <code className="text-zinc-450 break-all select-all font-mono block bg-zinc-950 px-1.5 py-1 rounded">{st.requestUrl}</code>
+                                        </div>
+                                      )}
+                                      {st.rawResponse && (
+                                        <div className="space-y-0.5">
+                                          <div className="flex justify-between items-center">
+                                            <span className="text-[8.5px] text-zinc-650 font-bold uppercase font-mono">View Raw API Response</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleCopyText(`tg-resp-${i}`, st.rawResponse)}
+                                              className="p-1 px-1.5 rounded hover:bg-zinc-805 text-zinc-500 hover:text-white flex items-center gap-0.5 transition duration-150"
+                                            >
+                                              <Copy className="w-2.5 h-2.5" />
+                                              <span className="text-[8px] font-bold">{copiedStates[`tg-resp-${i}`] ? 'Copied' : 'Copy'}</span>
+                                            </button>
+                                          </div>
+                                          <pre className="bg-[#050508] max-h-24 overflow-y-auto border border-zinc-900/65 rounded p-1.5 text-zinc-400 font-mono text-[9px] invisible-scrollbar whitespace-pre-wrap leading-relaxed select-all">
+                                            {JSON.stringify(st.rawResponse, null, 2)}
+                                          </pre>
+                                        </div>
+                                      )}
+                                      {st.rawError && (
+                                        <div className="space-y-0.5">
+                                          <div className="flex justify-between items-center">
+                                            <span className="text-[8.5px] text-zinc-650 font-bold uppercase font-mono text-rose-500/70">View Raw Error</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleCopyText(`tg-err-${i}`, st.rawError)}
+                                              className="p-1 px-1.5 rounded hover:bg-zinc-850 text-zinc-500 hover:text-white flex items-center gap-0.5 transition duration-150"
+                                            >
+                                              <Copy className="w-2.5 h-2.5" />
+                                              <span className="text-[8px] font-bold">{copiedStates[`tg-err-${i}`] ? 'Copied' : 'Copy'}</span>
+                                            </button>
+                                          </div>
+                                          <pre className="bg-[#0a0507] border border-red-950/50 rounded p-1.5 text-rose-455 font-mono text-[9px] invisible-scrollbar whitespace-pre-wrap leading-relaxed select-all">
+                                            {typeof st.rawError === 'object' ? JSON.stringify(st.rawError, null, 2) : String(st.rawError)}
+                                          </pre>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {!tgTestState.steps && tgTestState.error && (
+                      <div className="bg-rose-950/20 border border-rose-900/40 rounded-xl p-3 text-[10px] leading-relaxed select-all">
+                        <span className="font-mono text-rose-450 font-black block uppercase">[SYSTEM TRACE EXCEPTION]</span>
+                        <code className="text-zinc-350 font-mono block mt-1">{tgTestState.error}</code>
+                        {tgTestState.error && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText('tg-fatal-err', tgTestState.error)}
+                            className="p-1 px-2 mt-2 rounded bg-zinc-900 hover:bg-zinc-850 text-zinc-440 hover:text-white flex items-center gap-1 transition duration-155 text-[9px] font-mono border border-zinc-800"
+                          >
+                            <Copy className="w-2.5 h-2.5" />
+                            Copy Error Button
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center text-[9px] font-bold text-zinc-600">
+                      <span>Recent logs of active blocks alert posted to @{telegramChannel || 'undefined'}</span>
+                      {tgTestState.steps && (
+                        <button
+                          type="button"
+                          onClick={() => setExpTg(!expTg)}
+                          className="hover:text-white font-mono text-[9.5px] uppercase transition-colors"
+                        >
+                          {expTg ? 'Collapse Details △' : 'Expand Raw Details ▽'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* GEMINI SERVICE CARD */}
+                  <div className="p-4 bg-zinc-950/60 border border-zinc-900 rounded-[24px] space-y-4" id="health-card-gemini">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 relative">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${geminiTestState.success ? 'bg-emerald-400' : geminiTestState.error ? 'bg-rose-500' : 'bg-amber-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${geminiTestState.success ? 'bg-emerald-500' : geminiTestState.error ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
+                        </span>
+                        <h4 className="text-xs font-black uppercase tracking-wider font-mono text-zinc-200">Gemini LLM Cognitive API</h4>
+                      </div>
+
+                      <button
+                        type="button"
+                        id="test-gemini-health-btn"
+                        disabled={geminiTestState.running}
+                        onClick={runDiagnosticGemini}
+                        className="p-1.5 px-3 bg-[#0a0a0d] hover:bg-zinc-900 border border-zinc-850 rounded-xl text-[10px] font-bold font-mono tracking-wide text-zinc-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        {geminiTestState.running ? <RefreshCcw className="w-3 h-3 animate-spin text-purple-400" /> : <Settings className="w-3 h-3 text-purple-400" />}
+                        Verify Model
+                      </button>
+                    </div>
+
+                    <div className="space-y-2.5 text-xs">
+                      <div className="flex justify-between text-[11px] leading-relaxed">
+                        <span className="text-zinc-500 font-mono">Current LLM Status:</span>
+                        <span className={`font-mono font-bold ${geminiTestState.success ? 'text-emerald-400' : geminiTestState.error ? 'text-rose-400' : 'text-zinc-550'}`}>
+                          {geminiTestState.success ? '✅ ONLINE / STABLE' : geminiTestState.error ? `❌ FAILED: ${geminiTestState.error}` : '⏳ IDLE / UNTESTED'}
+                        </span>
+                      </div>
+
+                      {expGemini && (geminiTestState.statusCode || geminiTestState.requestUrl || geminiTestState.rawResponse || geminiTestState.rawError) && (
+                        <div className="bg-[#040406] border border-zinc-900/60 rounded-2xl p-4 space-y-3.5" id="gemini-diagnostic-details">
+                          <div className="flex justify-between items-center border-b border-zinc-900/40 pb-2 text-[9px] uppercase font-bold tracking-wider text-zinc-550">
+                            <span>Diagnostic Trace Variables</span>
+                            {geminiTestState.statusCode && (
+                              <span className={`font-mono px-1.5 rounded ${geminiTestState.statusCode === 200 ? 'bg-emerald-950/40 text-emerald-400' : 'bg-rose-955/40 text-rose-455'}`}>
+                                View Status Code: HTTP {geminiTestState.statusCode}
+                              </span>
+                            )}
+                          </div>
+
+                          {geminiTestState.requestUrl && (
+                            <div className="space-y-1">
+                              <span className="text-[8.5px] text-[#52525b] font-black uppercase font-mono block">View Request URL</span>
+                              <code className="text-[10px] text-zinc-400 font-mono block bg-zinc-950 p-2 rounded border border-zinc-900/40 w-full overflow-x-auto select-all">
+                                {geminiTestState.requestUrl}
+                              </code>
+                            </div>
+                          )}
+
+                          {geminiTestState.rawResponse && (
+                            <div className="space-y-1">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] text-[#52525b] font-black uppercase font-mono">View Raw API Response</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyText('gemini-raw-resp', geminiTestState.rawResponse)}
+                                  className="p-1 px-1.5 rounded hover:bg-zinc-900 text-zinc-500 hover:text-white flex items-center gap-0.5 transition duration-150 text-[10px]"
+                                >
+                                  <Copy className="w-2.5 h-2.5" />
+                                  <span className="text-[9px] font-bold">{copiedStates['gemini-raw-resp'] ? 'Copied' : 'Copy'}</span>
+                                </button>
+                              </div>
+                              <pre className="bg-[#050508] max-h-36 overflow-y-auto border border-zinc-900/65 rounded p-2.5 text-zinc-350 font-mono text-[10px] invisible-scrollbar whitespace-pre-wrap leading-relaxed select-all">
+                                {JSON.stringify(geminiTestState.rawResponse, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+
+                          {geminiTestState.rawError && (
+                            <div className="space-y-1">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] text-rose-400 font-black uppercase font-mono">View Raw Error</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyText('gemini-raw-err', geminiTestState.rawError)}
+                                  className="p-1 px-1.5 rounded bg-zinc-90 w-full max-w-22 text-zinc-500 hover:text-white flex items-center gap-1 transition duration-150 text-[10px] font-mono border border-zinc-900"
+                                >
+                                  <Copy className="w-2.5 h-2.5" />
+                                  <span className="text-[8.5px] font-extrabold">{copiedStates['gemini-raw-err'] ? 'Copied!' : 'Copy error'}</span>
+                                </button>
+                              </div>
+                              <pre className="bg-[#0b0507] max-h-36 overflow-y-auto border border-red-950/40 rounded p-2.5 text-rose-400 font-mono text-[10px] invisible-scrollbar whitespace-pre-wrap select-all leading-relaxed">
+                                {typeof geminiTestState.rawError === 'object' ? JSON.stringify(geminiTestState.rawError, null, 2) : String(geminiTestState.rawError)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end items-center">
+                      {(geminiTestState.statusCode || geminiTestState.requestUrl) && (
+                        <button
+                          type="button"
+                          onClick={() => setExpGemini(!expGemini)}
+                          className="text-zinc-600 hover:text-white font-mono text-[9px] uppercase transition duration-150"
+                        >
+                          {expGemini ? 'Collapse Details △' : 'Expand Raw Details ▽'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* YOUTUBE SERVICE CARD */}
+                  <div className="p-4 bg-zinc-950/60 border border-zinc-900 rounded-[24px] space-y-4" id="health-card-youtube">
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 relative">
+                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${youtubeTestState.success ? 'bg-emerald-400' : youtubeTestState.error ? 'bg-rose-500' : 'bg-amber-400'}`}></span>
+                          <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${youtubeTestState.success ? 'bg-emerald-500' : youtubeTestState.error ? 'bg-rose-500' : 'bg-amber-500'}`}></span>
+                        </span>
+                        <h4 className="text-xs font-black uppercase tracking-wider font-mono text-zinc-200">YouTube Tutorials Search API</h4>
+                      </div>
+
+                      <button
+                        type="button"
+                        id="test-youtube-health-btn"
+                        disabled={youtubeTestState.running}
+                        onClick={runDiagnosticYoutube}
+                        className="p-1.5 px-3 bg-[#0a0a0d] hover:bg-zinc-900 border border-zinc-850 rounded-xl text-[10px] font-bold font-mono tracking-wide text-zinc-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 select-none"
+                      >
+                        {youtubeTestState.running ? <RefreshCcw className="w-3 h-3 animate-spin text-red-500" /> : <Globe className="w-3 h-3 text-red-500" />}
+                        Verify API Key
+                      </button>
+                    </div>
+
+                    <div className="space-y-2.5 text-xs">
+                      <div className="flex justify-between text-[11px] leading-relaxed">
+                        <span className="text-zinc-500 font-mono">Current Search Status:</span>
+                        <span className={`font-mono font-bold ${youtubeTestState.success ? 'text-emerald-450' : youtubeTestState.error ? 'text-rose-455 font-extrabold' : 'text-zinc-550'}`}>
+                          {youtubeTestState.success ? '✅ ONLINE / ACTIVE' : youtubeTestState.error ? `❌ FAILED: ${youtubeTestState.error}` : '⏳ IDLE / UNTESTED'}
+                        </span>
+                      </div>
+
+                      {expYoutube && (youtubeTestState.statusCode || youtubeTestState.requestUrl || youtubeTestState.rawResponse || youtubeTestState.rawError) && (
+                        <div className="bg-[#040406] border border-zinc-900/60 rounded-2xl p-4 space-y-3" id="youtube-diagnostic-details">
+                          <div className="flex justify-between items-center border-b border-zinc-900/40 pb-2 text-[9px] uppercase font-bold tracking-wider text-zinc-550">
+                            <span>Diagnostic Trace Variables</span>
+                            {youtubeTestState.statusCode && (
+                              <span className={`font-mono px-1.5 rounded ${youtubeTestState.statusCode === 200 ? 'bg-emerald-950/40 text-emerald-400' : 'bg-rose-955/40 text-rose-455'}`}>
+                                View Status Code: HTTP {youtubeTestState.statusCode}
+                              </span>
+                            )}
+                          </div>
+
+                          {youtubeTestState.requestUrl && (
+                            <div className="space-y-1">
+                              <span className="text-[8.5px] text-[#52525b] font-black uppercase font-mono block">View Request URL</span>
+                              <code className="text-[10px] text-zinc-400 font-mono block bg-zinc-950 p-2 rounded border border-zinc-900/40 w-full overflow-x-auto select-all">
+                                {youtubeTestState.requestUrl}
+                              </code>
+                            </div>
+                          )}
+
+                          {youtubeTestState.rawResponse && (
+                            <div className="space-y-1">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] text-[#52525b] font-black uppercase font-mono">View Raw API Response</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyText('youtube-raw-resp', youtubeTestState.rawResponse)}
+                                  className="p-1 px-1.5 rounded hover:bg-zinc-900 text-zinc-500 hover:text-white flex items-center gap-0.5 transition duration-150 text-[10px]"
+                                >
+                                  <Copy className="w-2.5 h-2.5" />
+                                  <span className="text-[9px] font-bold">{copiedStates['youtube-raw-resp'] ? 'Copied' : 'Copy'}</span>
+                                </button>
+                              </div>
+                              <pre className="bg-[#050508] max-h-36 overflow-y-auto border border-zinc-900/65 rounded p-2.5 text-zinc-350 font-mono text-[10px] invisible-scrollbar whitespace-pre-wrap leading-relaxed select-all">
+                                {JSON.stringify(youtubeTestState.rawResponse, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+
+                          {youtubeTestState.rawError && (
+                            <div className="space-y-1">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[8.5px] text-rose-450 font-black uppercase font-mono">View Raw Error</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyText('youtube-raw-err', youtubeTestState.rawError)}
+                                  className="p-1 px-1.5 rounded bg-zinc-90 w-full max-w-22 text-zinc-500 hover:text-white flex items-center gap-1 transition duration-150 text-[10px] font-mono border border-zinc-900"
+                                >
+                                  <Copy className="w-2.5 h-2.5" />
+                                  <span className="text-[8.5px] font-extrabold">{copiedStates['youtube-raw-err'] ? 'Copied!' : 'Copy error'}</span>
+                                </button>
+                              </div>
+                              <pre className="bg-[#0b0507] max-h-36 overflow-y-auto border border-red-950/40 rounded p-2.5 text-rose-450 font-mono text-[10px] invisible-scrollbar whitespace-pre-wrap select-all leading-relaxed">
+                                {String(youtubeTestState.rawError)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end items-center">
+                      {(youtubeTestState.statusCode || youtubeTestState.requestUrl) && (
+                        <button
+                          type="button"
+                          onClick={() => setExpYoutube(!expYoutube)}
+                          className="text-zinc-600 hover:text-white font-mono text-[9px] uppercase transition duration-150"
+                        >
+                          {expYoutube ? 'Collapse Details △' : 'Expand Raw Details ▽'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 

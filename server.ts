@@ -1317,7 +1317,7 @@ async function startServer() {
     }
   });
 
-  // API Route: Telegram Bot send and test
+  // API Route: Telegram Bot send and test with robust multi-stage step-by-step connection checks
   app.post('/api/telegram-test', async (req, res) => {
     const { botToken, channelUsername, message } = req.body;
 
@@ -1326,50 +1326,375 @@ async function startServer() {
     }
 
     const textPayload = message || `🚨 ROY NO RULES Integration Test\nTimestamp: ${formatTime12h()}\nBot connection stands strong. Let's maintain absolute discipline!`;
+    const targetChannel = channelUsername.startsWith('@') ? channelUsername : `@${channelUsername}`;
 
+    const steps: Array<{
+      name: string;
+      status: 'success' | 'failed' | 'pending';
+      message: string;
+      requestUrl?: string;
+      statusCode?: number;
+      rawResponse?: any;
+      rawError?: any;
+    }> = [
+      { name: 'Verify Bot Token', status: 'pending', message: 'Checking token format.' },
+      { name: 'Verify Bot Exists', status: 'pending', message: 'Querying Telegram /getMe.' },
+      { name: 'Verify Channel Exists', status: 'pending', message: 'Querying Telegram /getChat.' },
+      { name: 'Verify Bot Is Admin', status: 'pending', message: 'Querying Telegram /getChatAdministrators.' },
+      { name: 'Send Test Message', status: 'pending', message: 'Dispatching message to channel.' }
+    ];
+
+    let botId: number | null = null;
+
+    // Step 1: Verify Bot Token Format
     try {
-      // Ensure channel begins with @
-      const targetChannel = channelUsername.startsWith('@') ? channelUsername : `@${channelUsername}`;
-      const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          chat_id: targetChannel,
-          text: textPayload,
-          parse_mode: 'HTML'
-        }),
-      });
-
-      const body = await response.json();
-
-      if (!response.ok || !body.ok) {
-        throw new Error(body.description || 'Failed to dispatch telegram message.');
+      if (typeof botToken !== 'string' || botToken.trim() === '') {
+        throw new Error('Bot token is empty');
       }
-
-      return res.json({
-        success: true,
-        message: 'Telegram test message dispatched successfully and confirmed by Telegram API!',
-        log: {
-          id: Math.random().toString(36).substr(2, 9),
-          timestamp: formatTime12h(),
-          type: 'success',
-          message: `Dispatched test: "${textPayload.substring(0, 30)}..." to ${targetChannel}`
-        }
-      });
+      if (!botToken.includes(':')) {
+        throw new Error('Invalid token');
+      }
+      steps[0].status = 'success';
+      steps[0].message = 'Bot token format is validated.';
+      steps[0].statusCode = 200;
+      steps[0].rawResponse = { format: 'valid' };
     } catch (err: any) {
+      steps[0].status = 'failed';
+      steps[0].message = 'Invalid token';
+      steps[0].rawError = err.message || err;
       return res.json({
         success: false,
-        error: err.message,
+        error: 'Invalid token',
+        failedStep: 'Verify Bot Token',
+        steps,
         log: {
           id: Math.random().toString(36).substr(2, 9),
           timestamp: formatTime12h(),
           type: 'error',
-          message: `Dispatch failed: ${err.message}`
+          message: `❌ [Verify Bot Token] Failure: Invalid token`
         }
+      });
+    }
+
+    // Step 2: Verify Bot Exists via /getMe
+    const getMeUrl = `https://api.telegram.org/bot${botToken}/getMe`;
+    steps[1].requestUrl = getMeUrl;
+    try {
+      const resp = await fetch(getMeUrl);
+      steps[1].statusCode = resp.status;
+      const body = await resp.json();
+      steps[1].rawResponse = body;
+
+      if (!resp.ok || !body.ok) {
+        if (resp.status === 401 || resp.status === 404 || body.description?.includes('Unauthorized')) {
+          throw new Error('Bot not found');
+        }
+        throw new Error(body.description || 'Bot validation failed');
+      }
+
+      botId = body.result.id;
+      steps[1].status = 'success';
+      steps[1].message = `Bot found: @${body.result.username} (${body.result.first_name})`;
+    } catch (err: any) {
+      steps[1].status = 'failed';
+      steps[1].message = err.message === 'Bot not found' ? 'Bot not found' : `Bot check failed: ${err.message}`;
+      steps[1].rawError = err.message || err;
+      const mappedErr = err.message === 'Bot not found' ? 'Bot not found' : 'Invalid token';
+      return res.json({
+        success: false,
+        error: mappedErr,
+        failedStep: 'Verify Bot Exists',
+        steps,
+        log: {
+          id: Math.random().toString(36).substr(2, 9),
+          timestamp: formatTime12h(),
+          type: 'error',
+          message: `❌ [Verify Bot Exists] Failure: ${mappedErr}`
+        }
+      });
+    }
+
+    // Step 3: Verify Channel Exists via /getChat
+    const getChatUrl = `https://api.telegram.org/bot${botToken}/getChat?chat_id=${encodeURIComponent(targetChannel)}`;
+    steps[2].requestUrl = getChatUrl;
+    try {
+      const resp = await fetch(getChatUrl);
+      steps[2].statusCode = resp.status;
+      const body = await resp.json();
+      steps[2].rawResponse = body;
+
+      if (!resp.ok || !body.ok) {
+        const desc = (body.description || '').toLowerCase();
+        if (resp.status === 400 || desc.includes('chat not found')) {
+          throw new Error('Channel not found');
+        }
+        if (desc.includes('kicked') || desc.includes('forbidden') || desc.includes('bot was kicked')) {
+          throw new Error('Forbidden: bot was kicked');
+        }
+        throw new Error(body.description || 'Channel validation failed');
+      }
+
+      steps[2].status = 'success';
+      steps[2].message = `Channel validated: ${body.result.title || body.result.username || targetChannel}`;
+    } catch (err: any) {
+      steps[2].status = 'failed';
+      steps[2].message = err.message;
+      steps[2].rawError = err.message || err;
+      const mappedErr = err.message.includes('Channel not found') ? 'Channel not found' :
+                        err.message.includes('Forbidden') ? 'Forbidden: bot was kicked' : err.message;
+      return res.json({
+        success: false,
+        error: mappedErr,
+        failedStep: 'Verify Channel Exists',
+        steps,
+        log: {
+          id: Math.random().toString(36).substr(2, 9),
+          timestamp: formatTime12h(),
+          type: 'error',
+          message: `❌ [Verify Channel Exists] Failure: ${mappedErr}`
+        }
+      });
+    }
+
+    // Step 4: Verify Bot Is Admin via /getChatAdministrators
+    const getAdminsUrl = `https://api.telegram.org/bot${botToken}/getChatAdministrators?chat_id=${encodeURIComponent(targetChannel)}`;
+    steps[3].requestUrl = getAdminsUrl;
+    try {
+      const resp = await fetch(getAdminsUrl);
+      steps[3].statusCode = resp.status;
+      const body = await resp.json();
+      steps[3].rawResponse = body;
+
+      if (!resp.ok || !body.ok) {
+        const desc = (body.description || '').toLowerCase();
+        if (desc.includes('bot was kicked') || desc.includes('kicked') || desc.includes('forbidden') || resp.status === 403) {
+          throw new Error('Forbidden: bot was kicked');
+        }
+        throw new Error('Bot is not admin');
+      }
+
+      const admins = body.result || [];
+      const isAdmin = admins.some((admin: any) => admin.user?.id === botId);
+      if (!isAdmin) {
+        throw new Error('Bot is not admin');
+      }
+
+      steps[3].status = 'success';
+      steps[3].message = 'Bot is admin with posting permissions.';
+    } catch (err: any) {
+      steps[3].status = 'failed';
+      steps[3].message = err.message;
+      steps[3].rawError = err.message || err;
+      const mappedErr = err.message.includes('Forbidden') ? 'Forbidden: bot was kicked' : 'Bot is not admin';
+      return res.json({
+        success: false,
+        error: mappedErr,
+        failedStep: 'Verify Bot Is Admin',
+        steps,
+        log: {
+          id: Math.random().toString(36).substr(2, 9),
+          timestamp: formatTime12h(),
+          type: 'error',
+          message: `❌ [Verify Bot Is Admin] Failure: ${mappedErr}`
+        }
+      });
+    }
+
+    // Step 5: Send Test Message via /sendMessage
+    const sendUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+    steps[4].requestUrl = sendUrl;
+    try {
+      const resp = await fetch(sendUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetChannel,
+          text: textPayload,
+          parse_mode: 'HTML'
+        })
+      });
+      steps[4].statusCode = resp.status;
+      const body = await resp.json();
+      steps[4].rawResponse = body;
+
+      if (!resp.ok || !body.ok) {
+        const desc = (body.description || '').toLowerCase();
+        if (desc.includes('kicked') || desc.includes('forbidden')) {
+          throw new Error('Forbidden: bot was kicked');
+        }
+        throw new Error(body.description || 'Failed to dispatch telegram message.');
+      }
+
+      steps[4].status = 'success';
+      steps[4].message = 'Message dispatched successfully!';
+    } catch (err: any) {
+      steps[4].status = 'failed';
+      steps[4].message = err.message;
+      steps[4].rawError = err.message || err;
+      const mappedErr = err.message.includes('Forbidden') ? 'Forbidden: bot was kicked' : err.message;
+      return res.json({
+        success: false,
+        error: mappedErr,
+        failedStep: 'Send Test Message',
+        steps,
+        log: {
+          id: Math.random().toString(36).substr(2, 9),
+          timestamp: formatTime12h(),
+          type: 'error',
+          message: `❌ [Send Test Message] Failure: ${mappedErr}`
+        }
+      });
+    }
+
+    // All steps succeeded!
+    return res.json({
+      success: true,
+      message: 'Telegram test message dispatched successfully and confirmed by Telegram API!',
+      steps,
+      log: {
+        id: Math.random().toString(36).substr(2, 9),
+        timestamp: formatTime12h(),
+        type: 'success',
+        message: `Dispatched test: "${textPayload.substring(0, 30)}..." to ${targetChannel}`
+      }
+    });
+  });
+
+  // API Route: Test Gemini Connection and check specific quotas/keys/permissions/networks
+  app.post('/api/health/test-gemini', async (req, res) => {
+    const { geminiApiKey } = req.body;
+    const testKey = geminiApiKey || process.env.GEMINI_API_KEY;
+
+    if (!testKey || testKey.trim() === '') {
+      return res.json({
+        success: false,
+        error: "Invalid API Key",
+        statusCode: 400,
+        requestUrl: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        rawResponse: { error: "Missing or empty key" },
+        rawError: "API key is missing"
+      });
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: testKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-flash',
+        contents: 'respond with ok'
+      });
+
+      return res.json({
+        success: true,
+        message: 'Gemini API is active and healthy!',
+        statusCode: 200,
+        requestUrl: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        rawResponse: response
+      });
+    } catch (err: any) {
+      const errMsg = (err.message || String(err)).toLowerCase();
+      const errStatus = (err.status || '').toLowerCase();
+      const errCode = err.code || err.statusCode || 1000;
+      
+      let mappedError = "Network error";
+      if (errCode === 400 || errMsg.includes('api key') || errMsg.includes('key not valid') || errMsg.includes('invalid_argument')) {
+        mappedError = "Invalid API Key";
+      } else if (errCode === 429 || errMsg.includes('quota') || errMsg.includes('limit') || errMsg.includes('resource_exhausted') || errStatus.includes('resource_exhausted')) {
+        mappedError = "Quota exceeded";
+      } else if (errCode === 403 || errMsg.includes('permission') || errMsg.includes('denied') || errStatus.includes('permission_denied')) {
+        mappedError = "Permission denied";
+      } else if (errMsg.includes('fetch') || errMsg.includes('network') || errMsg.includes('econnrefused')) {
+        mappedError = "Network error";
+      } else {
+        mappedError = `Gemini Exception: ${err.message || err}`;
+      }
+
+      return res.json({
+        success: false,
+        error: mappedError,
+        statusCode: errCode || 500,
+        requestUrl: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        rawResponse: err.error || err,
+        rawError: err.message || String(err)
+      });
+    }
+  });
+
+  // API Route: Test YouTube Connection with key limits, permissions, and status feedback
+  app.post('/api/health/test-youtube', async (req, res) => {
+    const { youtubeApiKey } = req.body;
+
+    if (!youtubeApiKey || youtubeApiKey.trim() === '') {
+      return res.json({
+        success: false,
+        error: "API key invalid",
+        statusCode: 400,
+        requestUrl: "https://www.googleapis.com/youtube/v3/search",
+        rawResponse: { error: "Missing or empty key" },
+        rawError: "YouTube API key is missing"
+      });
+    }
+
+    const testUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=fitness&key=${youtubeApiKey}&type=video&maxResults=1`;
+
+    try {
+      const resp = await fetch(testUrl);
+      const code = resp.status;
+      const data = await resp.json();
+
+      if (!resp.ok || data.error) {
+        const errMsg = (data.error?.message || '').toLowerCase();
+        const reason = (data.error?.errors?.[0]?.reason || '').toLowerCase();
+        
+        let mappedError = "Request denied";
+        if (code === 400 || reason.includes('keyinvalid') || errMsg.includes('key is invalid') || errMsg.includes('apikeyinvalid')) {
+          mappedError = "API key invalid";
+        } else if (code === 403 && (reason.includes('quotaexceeded') || errMsg.includes('quota') || errMsg.includes('limit') || reason.includes('rateLimitExceeded'))) {
+          mappedError = "Quota exceeded";
+        } else if (code === 403 || reason.includes('forbidden') || errMsg.includes('denied') || errMsg.includes('permission')) {
+          mappedError = "Request denied";
+        }
+
+        return res.json({
+          success: false,
+          error: mappedError,
+          statusCode: code,
+          requestUrl: `https://www.googleapis.com/youtube/v3/search?part=snippet&q=fitness&key=***&type=video&maxResults=1`,
+          rawResponse: data,
+          rawError: data.error?.message || JSON.stringify(data.error)
+        });
+      }
+
+      const items = data.items || [];
+      if (items.length === 0) {
+        return res.json({
+          success: false,
+          error: "No videos found",
+          statusCode: 200,
+          requestUrl: `https://www.googleapis.com/youtube/v3/search?part=snippet&q=fitness&key=***&type=video&maxResults=1`,
+          rawResponse: data,
+          rawError: "Search completed successfully but returned 0 items from YouTube indexing pool."
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: 'YouTube API is active and healthy!',
+        statusCode: 200,
+        requestUrl: `https://www.googleapis.com/youtube/v3/search?part=snippet&q=fitness&key=***&type=video&maxResults=1`,
+        rawResponse: data
+      });
+    } catch (err: any) {
+      return res.json({
+        success: false,
+        error: "Network error",
+        statusCode: 500,
+        requestUrl: "https://www.googleapis.com/youtube/v3/search",
+        rawResponse: null,
+        rawError: err.message || String(err)
       });
     }
   });

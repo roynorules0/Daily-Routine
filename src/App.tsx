@@ -667,8 +667,8 @@ export default function App() {
         addToast(`Connection failed: ${res.error}`, 'error');
         setTelegramLogs(prev => [res.log, ...prev].slice(0, 50));
       }
-    } catch (err) {
-      addToast('Fatal failure testing integration linking.', 'error');
+    } catch (err: any) {
+      addToast(`Connection failed: ${err.message || String(err)}`, 'error');
     } finally {
       setTestingTelegram(false);
     }
