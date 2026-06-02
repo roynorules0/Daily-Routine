@@ -1,0 +1,6 @@
+{
+  "name": "ROY NO RULES",
+  "description": "Study, Gym, Discipline, No Excuses, routine tracking, NEET prep planner, and AI motivation app.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
