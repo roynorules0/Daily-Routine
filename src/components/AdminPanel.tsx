@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  X, Save, FileOutput, FileInput, Send, RefreshCcw, ShieldAlert, Key, 
-  Settings, Clock, Bell, Palette, Globe, ChevronRight, Lock, Unlock, Check, Copy
+   X, Save, FileOutput, FileInput, Send, RefreshCcw, ShieldAlert, Key, 
+   Settings, Clock, Bell, Palette, Globe, ChevronRight, Lock, Unlock, Check, Copy
 } from 'lucide-react';
 import { AdminSettings, RoutineItem, WorkoutDay, TelegramLog } from '../types';
+import { traceableFetch } from '../utils/api';
 
 interface AdminPanelProps {
   settings: AdminSettings;
@@ -99,34 +100,44 @@ export default function AdminPanel({
     setTgTestState({ running: true });
     setExpTg(true);
     addToast('Starting detailed 5-stage Telegram connection test...', 'info');
-    try {
-      const response = await fetch('/api/telegram-test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          botToken: telegramToken,
-          channelUsername: telegramChannel
-        })
-      });
-      const data = await response.json();
+    
+    const trace = await traceableFetch('/api/telegram-test', 'Telegram Bot Channel Link (POST)', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        botToken: telegramToken,
+        channelUsername: telegramChannel
+      })
+    });
+
+    if (trace.ok && trace.parsedResponse) {
+      const data = trace.parsedResponse;
       setTgTestState({
         running: false,
         success: data.success,
-        error: data.error,
-        steps: data.steps
+        error: data.error || trace.error,
+        steps: data.steps,
+        statusCode: trace.status,
+        requestUrl: trace.url,
+        rawResponse: trace.rawResponse,
+        rawError: data.error || trace.error
       });
       if (data.success) {
         addToast('Telegram connection validated successfully!', 'success');
       } else {
-        addToast(`Telegram connection check failed: ${data.error}`, 'error');
+        addToast(`Telegram connection check failed: ${data.error || 'Check status details'}`, 'error');
       }
-    } catch (err: any) {
+    } else {
       setTgTestState({
         running: false,
         success: false,
-        error: err.message || 'Fatal diagnostic failure.'
+        error: trace.error || 'Server returned invalid format or HTML content.',
+        statusCode: trace.status,
+        requestUrl: trace.url,
+        rawResponse: trace.rawResponse,
+        rawError: trace.error
       });
-      addToast('Detailed Telegram test hit a network block.', 'error');
+      addToast(`Telegram trace failed: ${trace.error || 'Invalid API response format'}`, 'error');
     }
   };
 
@@ -134,23 +145,25 @@ export default function AdminPanel({
     setGeminiTestState({ running: true });
     setExpGemini(true);
     addToast('Contacting Gemini LLM API systems...', 'info');
-    try {
-      const response = await fetch('/api/health/test-gemini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          geminiApiKey: geminiKey
-        })
-      });
-      const data = await response.json();
+    
+    const trace = await traceableFetch('/api/health/test-gemini', 'Gemini LLM Cognitive API (POST)', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        geminiApiKey: geminiKey
+      })
+    });
+
+    if (trace.ok && trace.parsedResponse) {
+      const data = trace.parsedResponse;
       setGeminiTestState({
         running: false,
         success: data.success,
-        error: data.error,
-        statusCode: data.statusCode,
-        requestUrl: data.requestUrl,
-        rawResponse: data.rawResponse,
-        rawError: data.rawError,
+        error: data.error || trace.error,
+        statusCode: trace.status,
+        requestUrl: trace.url,
+        rawResponse: trace.rawResponse,
+        rawError: data.rawError || trace.error,
         message: data.message
       });
       if (data.success) {
@@ -158,14 +171,17 @@ export default function AdminPanel({
       } else {
         addToast(`Gemini verified failure: ${data.error}`, 'error');
       }
-    } catch (err: any) {
+    } else {
       setGeminiTestState({
         running: false,
         success: false,
-        error: 'Network error',
-        rawError: err.message || err
+        error: trace.error || 'Invalid API response format or HTML content.',
+        statusCode: trace.status,
+        requestUrl: trace.url,
+        rawResponse: trace.rawResponse,
+        rawError: trace.error
       });
-      addToast('Gemini test hit a network block.', 'error');
+      addToast(`Gemini check failed: ${trace.error || 'Invalid format'}`, 'error');
     }
   };
 
@@ -173,23 +189,25 @@ export default function AdminPanel({
     setYoutubeTestState({ running: true });
     setExpYoutube(true);
     addToast('Starting YouTube API verification query...', 'info');
-    try {
-      const response = await fetch('/api/health/test-youtube', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          youtubeApiKey: youtubeKey
-        })
-      });
-      const data = await response.json();
+
+    const trace = await traceableFetch('/api/health/test-youtube', 'YouTube Tutorials Search API (POST)', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        youtubeApiKey: youtubeKey
+      })
+    });
+
+    if (trace.ok && trace.parsedResponse) {
+      const data = trace.parsedResponse;
       setYoutubeTestState({
         running: false,
         success: data.success,
-        error: data.error,
-        statusCode: data.statusCode,
-        requestUrl: data.requestUrl,
-        rawResponse: data.rawResponse,
-        rawError: data.rawError,
+        error: data.error || trace.error,
+        statusCode: trace.status,
+        requestUrl: trace.url,
+        rawResponse: trace.rawResponse,
+        rawError: data.rawError || trace.error,
         message: data.message
       });
       if (data.success) {
@@ -197,14 +215,17 @@ export default function AdminPanel({
       } else {
         addToast(`YouTube API check failed: ${data.error}`, 'error');
       }
-    } catch (err: any) {
+    } else {
       setYoutubeTestState({
         running: false,
         success: false,
-        error: 'Network error',
-        rawError: err.message || err
+        error: trace.error || 'Invalid API response format or HTML content.',
+        statusCode: trace.status,
+        requestUrl: trace.url,
+        rawResponse: trace.rawResponse,
+        rawError: trace.error
       });
-      addToast('YouTube API test hit a network block.', 'error');
+      addToast(`YouTube API check failed: ${trace.error || 'Invalid format'}`, 'error');
     }
   };
 
